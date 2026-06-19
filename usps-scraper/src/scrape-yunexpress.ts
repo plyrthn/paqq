@@ -172,53 +172,66 @@ async function queryTrackingViaPage(
 ): Promise<YunexpressQueryResponse> {
   const page = await session.context.newPage();
   try {
-    await page.goto(BASE_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: timeoutMs,
-    });
+    // The WAF only sets its acw_tc cookie during the first cross-origin call,
+    // so a cold context's first POST frequently returns 405. Retrying the fetch
+    // in the same page (after re-navigating) lets the now-present cookie through
+    // instead of tearing down and starting cold again.
+    const maxWafAttempts = 5;
+    for (let attempt = 1; attempt <= maxWafAttempts; attempt += 1) {
+      await page.goto(BASE_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: timeoutMs,
+      });
+      await page.waitForTimeout(600 + attempt * 500);
 
-    const body = buildSignedBody([trackingNumber]);
-    const result = await page.evaluate(
-      async ({ url, payload, requestTimeout }) => {
-        const controller = new AbortController();
-        const abortTimer = setTimeout(
-          () => controller.abort(),
-          requestTimeout
-        );
+      const body = buildSignedBody([trackingNumber]);
+      const result = await page.evaluate(
+        async ({ url, payload, requestTimeout }) => {
+          const controller = new AbortController();
+          const abortTimer = setTimeout(
+            () => controller.abort(),
+            requestTimeout
+          );
+          try {
+            const res = await fetch(url, {
+              method: "POST",
+              credentials: "include",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json, text/plain, */*",
+                Authorization: "Nebula token:undefined",
+              },
+              body: JSON.stringify(payload),
+              signal: controller.signal,
+            });
+            return { status: res.status, text: await res.text() };
+          } finally {
+            clearTimeout(abortTimer);
+          }
+        },
+        { url: API_URL, payload: body, requestTimeout: timeoutMs }
+      );
+
+      if (result.status === 200) {
         try {
-          const res = await fetch(url, {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json, text/plain, */*",
-              Authorization: "Nebula token:undefined",
-            },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-          });
-          return { status: res.status, text: await res.text() };
-        } finally {
-          clearTimeout(abortTimer);
+          return JSON.parse(result.text) as YunexpressQueryResponse;
+        } catch {
+          throw new Error("YunExpress tracking response was not valid JSON");
         }
-      },
-      { url: API_URL, payload: body, requestTimeout: timeoutMs }
-    );
+      }
 
-    if (result.status === 405) {
-      throw new WafExpiredError();
-    }
-    if (result.status !== 200) {
+      if (result.status === 405) {
+        // Cookie not established yet; re-navigate and try again.
+        await page.waitForTimeout(500);
+        continue;
+      }
+
       throw new Error(
         `YunExpress tracking request failed (status ${result.status})`
       );
     }
 
-    try {
-      return JSON.parse(result.text) as YunexpressQueryResponse;
-    } catch {
-      throw new Error("YunExpress tracking response was not valid JSON");
-    }
+    throw new WafExpiredError();
   } finally {
     await page.close().catch(() => undefined);
   }
@@ -245,8 +258,10 @@ export async function scrapeYunexpressTracking(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const session = await createBrowserSession(timeoutMs, {
-      // A stale/expired WAF cookie should not poison subsequent retries.
-      usePersistedState: attempt === 1,
+      // The WAF's acw_tc cookie is short-lived (~30 min). Reusing a persisted,
+      // expired cookie causes 405s, so always start from a clean context and
+      // let the in-page retry establish a fresh cookie.
+      usePersistedState: false,
     });
 
     try {
