@@ -1,6 +1,6 @@
 {
   "name": "paqq-backend",
-  "version": "2026.6.19",
+  "version": "2026.6.19-r1",
   "description": "Paqq backend API and scheduler.",
   "main": "dist/node.js",
   "scripts": {
