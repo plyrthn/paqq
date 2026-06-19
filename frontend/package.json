@@ -1,7 +1,7 @@
 {
   "name": "paqq-frontend",
   "private": true,
-  "version": "2026.3.5",
+  "version": "2026.6.19",
   "scripts": {
     "check:inline": "bun scripts/check-static.mjs inline",
     "check:sw": "bun scripts/check-static.mjs sw",
