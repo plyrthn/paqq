@@ -134,18 +134,24 @@ async function createBrowserSession(
     };
   }
 
+  const headless = process.env.YUNEXPRESS_HEADFUL !== "1";
+
+  // Headless on a server has no GPU, so the acceleration flags just add
+  // software-emulation overhead. --disable-dev-shm-usage routes Chromium's
+  // shared memory to /tmp instead of the tiny default /dev/shm, which is the
+  // usual cause of crashes in containers.
+  const launchArgs = headless
+    ? [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ]
+    : ["--disable-blink-features=AutomationControlled"];
+
   const browser: Browser = await chromium.launch({
-    headless: process.env.YUNEXPRESS_HEADFUL === "1" ? false : true,
+    headless,
     executablePath: getExecutablePath(),
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--enable-gpu",
-      "--ignore-gpu-blocklist",
-      "--use-angle=default",
-      "--use-gl=angle",
-      "--enable-zero-copy",
-      "--enable-accelerated-2d-canvas",
-    ],
+    args: launchArgs,
   });
 
   const context = await browser.newContext(contextOptions);
