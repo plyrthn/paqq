@@ -3,7 +3,12 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { BrowserContext, BrowserContextOptions } from "playwright";
 
-export type CarrierSessionKey = "amazon" | "ups" | "usps" | "uniuni";
+export type CarrierSessionKey =
+  | "amazon"
+  | "ups"
+  | "usps"
+  | "uniuni"
+  | "yunexpress";
 type PersistedStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
 function compact(value: string | undefined | null): string | undefined {

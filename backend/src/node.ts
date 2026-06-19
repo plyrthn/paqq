@@ -4,6 +4,7 @@ import { handleRequest } from './app';
 import { TrackingScheduler } from './scheduler';
 import { RuntimeSettingsStore } from './settings-store';
 import { AppriseNotifier } from './apprise-notifier';
+import { SourceHealthMonitor } from './source-health';
 
 const port = Number(process.env.PORT ?? '8787');
 const host = process.env.HOST ?? '0.0.0.0';
@@ -13,6 +14,12 @@ const scheduler = new TrackingScheduler(process.env, {
   settings: settingsStore,
   notifications: notifier,
 });
+const healthMonitor = new SourceHealthMonitor(process.env, {
+  scheduler,
+  settings: settingsStore,
+  notifications: notifier,
+});
+scheduler.setAfterRunHook(() => healthMonitor.evaluate());
 
 void scheduler.start();
 
@@ -57,6 +64,7 @@ const server = createServer(async (req, res) => {
       scheduler,
       settings: settingsStore,
       notifications: notifier,
+      health: healthMonitor,
     });
 
     res.statusCode = response.status;

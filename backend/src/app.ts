@@ -18,6 +18,9 @@ export interface RequestServices {
   notifications?: {
     sendTestNotification: () => Promise<{ ok: boolean; detail?: string }>;
   };
+  health?: {
+    getReport: () => Promise<unknown[]>;
+  };
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -119,6 +122,14 @@ export async function handleRequest(
     }
     const result = await services.notifications.sendTestNotification();
     return jsonResponse(result, result.ok ? 200 : 500);
+  }
+
+  if (url.pathname === '/api/health/sources') {
+    if (!services.health) {
+      return jsonResponse({ error: 'Source health is unavailable in this runtime' }, 404);
+    }
+    const sources = await services.health.getReport();
+    return jsonResponse({ sources });
   }
 
   if (url.pathname === '/api/scheduler/status') {

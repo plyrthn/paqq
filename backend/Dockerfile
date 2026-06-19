@@ -3,7 +3,7 @@ FROM oven/bun:1.3.10-alpine
 WORKDIR /app
 
 RUN apk add --no-cache python3 py3-pip && \
-    pip3 install --no-cache-dir "apprise>=1.9.0,<2"
+    pip3 install --no-cache-dir --break-system-packages "apprise>=1.9.0,<2"
 
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile

@@ -16,7 +16,14 @@
 
 - Paqq-first naming and branding across the stack
 - **UniUni** support end-to-end
+- **YunExpress** support via YunExpress's own tracking backend (no third-party
+  API key or quota), with WAF bypass through a real Chromium page
 - **USPS + UniUni + UPS scraping** via Playwright/CDP + stealth hardening
+- **Source health monitoring**: detects when a carrier source stops working
+  (systemic failures, not one-off not-found packages) and surfaces it via
+  `GET /api/health/sources`, an Apprise alert, and a frontend banner
+- **Upstream auto-sync** workflow that merges upstream, verifies it builds and
+  passes tests, then auto-merges the update
 - **Amazon order import scraper** with username/password + optional TOTP
 - **Asynchronous package add flow**:
   - package is saved immediately
@@ -45,6 +52,7 @@
 - UPS
 - USPS
 - UniUni
+- YunExpress
 - Amazon (import flow)
 
 ### Tracking UX
@@ -106,6 +114,19 @@ docker compose up -d --build
 - `PAQQ_APPRISE_PYTHON_BIN` (default `python3`)
 - `PAQQ_APPRISE_TIMEOUT_MS` (default `20000`)
 
+### Source health env
+
+The backend tracks per-source health from scheduler results. A source is marked
+`down` only when multiple distinct tracking numbers fail consecutively with no
+recent success, so a single bad/not-found package does not trip an alert. When a
+source flips to `down` (or recovers) an Apprise notification is sent if
+notifications are enabled.
+
+- `PAQQ_SOURCE_HEALTH_ENABLED` (default `true`)
+- `PAQQ_SOURCE_HEALTH_MIN_FAILURES` (consecutive failures per tracking number to count as failing, default `3`)
+- `PAQQ_SOURCE_HEALTH_MIN_DISTINCT` (distinct failing tracking numbers required for `down`, default `2`)
+- `PAQQ_SOURCE_HEALTH_STATE_FILE` (default `/app/data/source-health-state.json`)
+
 ### Scraper/Carrier env
 
 - `PAQQ_SCRAPER_STATE_DIR` (persistent browser state directory, default auto-detected)
@@ -114,6 +135,7 @@ docker compose up -d --build
 - `UPS_PERSIST_SESSION_STATE` (carrier override, optional)
 - `USPS_PERSIST_SESSION_STATE` (carrier override, optional)
 - `UNIUNI_PERSIST_SESSION_STATE` (carrier override, optional)
+- `YUNEXPRESS_PERSIST_SESSION_STATE` (carrier override, optional)
 
 - `USPS_SCRAPER_URL` (backend -> scraper URL, default `http://127.0.0.1:8790`)
 - `USPS_SCRAPER_TOKEN` (optional)
@@ -133,6 +155,16 @@ docker compose up -d --build
 - `UPS_SCRAPER_TIMEOUT_MS` (default `300000`)
 - `UPS_SCRAPE_MAX_ATTEMPTS` (scraper retries, default `5`)
 - `UPS_CDP_WS_ENDPOINT` (optional CDP endpoint)
+
+- `YUNEXPRESS_SCRAPER_URL` (backend -> scraper URL, default `http://127.0.0.1:8790`)
+- `YUNEXPRESS_SCRAPER_TOKEN` (optional)
+- `YUNEXPRESS_SCRAPER_TIMEOUT_MS` (default `300000`)
+- `YUNEXPRESS_SCRAPE_MAX_ATTEMPTS` (scraper retries, default `5`)
+- `YUNEXPRESS_CDP_WS_ENDPOINT` (optional CDP endpoint)
+- YunExpress data comes from YunExpress's own tracking backend
+  (`services.yuntrack.com`). The request is signed and issued from inside a real
+  Chromium page to pass the carrier's WAF, so no third-party API key or quota is
+  required.
 
 - `AMAZON_SCRAPER_URL` (backend -> scraper URL, default `http://127.0.0.1:8790`)
 - `AMAZON_SCRAPER_TOKEN` (optional)
@@ -240,6 +272,17 @@ npm run test:live:all
     - `usps-scraper/package.json` + `usps-scraper/package-lock.json`
   - Commits the version update, tags (`v<version>`), and publishes a GitHub Release
 
+- Upstream sync workflow: `.github/workflows/upstream-sync.yml`
+  - Runs on a daily schedule and via manual dispatch
+  - Merges the upstream repo's default branch, then runs the backend, scraper,
+    and frontend build/test suites against the merged tree
+  - If everything passes it opens a PR and merges it automatically; on merge
+    conflicts or failing checks it leaves the PR open for manual review
+  - Optional secret `UPSTREAM_SYNC_TOKEN` (a PAT with `repo` + `workflow`
+    scope). Without it the default `GITHUB_TOKEN` is used, which cannot push
+    changes to files under `.github/workflows/`; set the secret if upstream
+    modifies workflow files.
+
 ## API
 
 ### `GET /api/list`
@@ -278,6 +321,21 @@ Imports recent Amazon shipments and invoice artifacts. Supports two-step auth:
 - `GET /api/settings`
 - `PUT /api/settings`
 - `POST /api/settings/notifications/test`
+
+### Source health endpoint (Node runtime)
+
+- `GET /api/health/sources`
+
+Returns `{ sources: [...] }` where each entry is:
+
+- `source`
+- `status` (`up` | `degraded` | `down` | `unknown`)
+- `watchedCount`, `failingCount`, `healthyCount`
+- `lastSuccessAt`, `lastFailureAt`, `lastError`
+- `since` (when the current status began)
+
+The frontend polls this endpoint and shows a banner when any source is degraded
+or down.
 
 ## Fork Attribution
 

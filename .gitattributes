@@ -1,0 +1,9 @@
+# Shell scripts must stay LF so they run inside Linux containers even when the
+# repo is checked out on Windows (CRLF breaks the script shebang).
+*.sh text eol=lf
+
+# Keep image assets binary.
+*.png binary
+*.webp binary
+*.jpg binary
+*.ico binary

@@ -12,6 +12,7 @@ async function startServer(
     usps: Parameters<typeof createScraperServer>[0]["usps"];
     uniuni: Parameters<typeof createScraperServer>[0]["uniuni"];
     ups: Parameters<typeof createScraperServer>[0]["ups"];
+    yunexpress: Parameters<typeof createScraperServer>[0]["yunexpress"];
     amazonImport: Parameters<typeof createScraperServer>[0]["amazonImport"];
   }
 ): Promise<RunningServer> {
@@ -36,6 +37,7 @@ afterEach(async () => {
   delete process.env.USPS_SCRAPER_TOKEN;
   delete process.env.UNIUNI_SCRAPER_TOKEN;
   delete process.env.UPS_SCRAPER_TOKEN;
+  delete process.env.YUNEXPRESS_SCRAPER_TOKEN;
   delete process.env.AMAZON_SCRAPER_TOKEN;
 
   while (cleanupTasks.length > 0) {
@@ -70,6 +72,7 @@ describe("scraper server routing", () => {
       usps: vi.fn(),
       uniuni: vi.fn(),
       ups,
+      yunexpress: vi.fn(),
       amazonImport: vi.fn(),
     });
     cleanupTasks.push(server.close);
@@ -121,6 +124,7 @@ describe("scraper server routing", () => {
       usps,
       uniuni: vi.fn(),
       ups: vi.fn(),
+      yunexpress: vi.fn(),
       amazonImport: vi.fn(),
     });
     cleanupTasks.push(server.close);
@@ -139,6 +143,59 @@ describe("scraper server routing", () => {
     expect(usps).toHaveBeenCalledTimes(2);
   });
 
+  it("routes /track/yunexpress requests and enforces YunExpress token when configured", async () => {
+    process.env.YUNEXPRESS_SCRAPER_TOKEN = "yunexpress-secret";
+    const yunexpress = vi.fn().mockResolvedValue({
+      trackingNumber: "YT2521800703039536",
+      trackingUrl:
+        "https://www.yuntrack.com/parcelTracking?id=YT2521800703039536",
+      carrier: "yunexpress",
+      status: {
+        code: "5",
+        description: "Delivered",
+        timestamp: "2025-08-18T10:14:33.000Z",
+      },
+      events: [
+        {
+          code: "5",
+          description: "Delivered",
+          timestamp: "2025-08-18T10:14:33.000Z",
+        },
+      ],
+    });
+    const server = await startServer({
+      usps: vi.fn(),
+      uniuni: vi.fn(),
+      ups: vi.fn(),
+      yunexpress,
+      amazonImport: vi.fn(),
+    });
+    cleanupTasks.push(server.close);
+
+    const unauthorized = await fetch(`${server.baseUrl}/track/yunexpress`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ trackingNumber: "YT2521800703039536" }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await fetch(`${server.baseUrl}/track/yunexpress`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-yunexpress-scraper-token": "yunexpress-secret",
+      },
+      body: JSON.stringify({
+        trackingNumber: "YT2521800703039536",
+        timeoutMs: 45000,
+      }),
+    });
+    expect(authorized.status).toBe(200);
+    expect(yunexpress).toHaveBeenCalledTimes(1);
+    expect(yunexpress.mock.calls[0][0]).toBe("YT2521800703039536");
+    expect(yunexpress.mock.calls[0][1]).toEqual({ timeoutMs: 45000 });
+  });
+
   it("routes /amazon/import and enforces Amazon token when configured", async () => {
     process.env.AMAZON_SCRAPER_TOKEN = "amazon-secret";
     const amazonImport = vi.fn().mockResolvedValue({
@@ -151,6 +208,7 @@ describe("scraper server routing", () => {
       usps: vi.fn(),
       uniuni: vi.fn(),
       ups: vi.fn(),
+      yunexpress: vi.fn(),
       amazonImport,
     });
     cleanupTasks.push(server.close);

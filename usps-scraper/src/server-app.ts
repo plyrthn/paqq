@@ -14,6 +14,7 @@ export interface ScraperRouteHandlers {
   usps: (trackingNumber: string, options: { timeoutMs?: number }) => Promise<ShipmentInfo>;
   uniuni: (trackingNumber: string, options: { timeoutMs?: number }) => Promise<ShipmentInfo>;
   ups: (trackingNumber: string, options: { timeoutMs?: number }) => Promise<ShipmentInfo>;
+  yunexpress: (trackingNumber: string, options: { timeoutMs?: number }) => Promise<ShipmentInfo>;
   amazonImport: (payload: AmazonImportRequest) => Promise<AmazonImportResponse>;
 }
 
@@ -22,6 +23,7 @@ const TRACKING_ROUTES = new Set([
   "/track/usps",
   "/track/uniuni",
   "/track/ups",
+  "/track/yunexpress",
 ]);
 const AMAZON_IMPORT_ROUTE = "/amazon/import";
 
@@ -67,12 +69,17 @@ function ensureAuthToken(
   return true;
 }
 
-function resolveRoute(routePath: string): "usps" | "uniuni" | "ups" {
+function resolveRoute(
+  routePath: string
+): "usps" | "uniuni" | "ups" | "yunexpress" {
   if (routePath === "/track" || routePath === "/track/usps") {
     return "usps";
   }
   if (routePath === "/track/ups") {
     return "ups";
+  }
+  if (routePath === "/track/yunexpress") {
+    return "yunexpress";
   }
   return "uniuni";
 }
@@ -167,6 +174,16 @@ export function createScraperServer(handlers: ScraperRouteHandlers): Server {
         if (!isAuthorized) {
           return;
         }
+      } else if (route === "yunexpress") {
+        const isAuthorized = ensureAuthToken(
+          req,
+          res,
+          process.env.YUNEXPRESS_SCRAPER_TOKEN,
+          "x-yunexpress-scraper-token"
+        );
+        if (!isAuthorized) {
+          return;
+        }
       } else {
         const isAuthorized = ensureAuthToken(
           req,
@@ -191,6 +208,8 @@ export function createScraperServer(handlers: ScraperRouteHandlers): Server {
           ? await handlers.usps(trackingNumber, { timeoutMs })
           : route === "uniuni"
           ? await handlers.uniuni(trackingNumber, { timeoutMs })
+          : route === "yunexpress"
+          ? await handlers.yunexpress(trackingNumber, { timeoutMs })
           : await handlers.ups(trackingNumber, { timeoutMs });
       return jsonResponse(res, 200, shipment);
     } catch (error) {

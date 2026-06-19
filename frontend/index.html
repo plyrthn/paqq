@@ -32,7 +32,7 @@
     />
     <meta
       name="keywords"
-      content="package, packages, tracking, tracker, asendia, mondialrelay, colis, parcel, laposte, ups, dhl, colissimo, usps, uniuni, suivi"
+      content="package, packages, tracking, tracker, asendia, mondialrelay, colis, parcel, laposte, ups, dhl, colissimo, usps, uniuni, yunexpress, suivi"
     />
     <meta name="robots" content="index, follow" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
@@ -496,6 +496,12 @@
     <div class="flex justify-center items-center mb-8 mt-4">
       <img src="logo.svg" alt="Paqq Logo" class="w-96 mr-2 drop-shadow-xl" />
     </div>
+    <div
+      id="sourceHealthBanner"
+      class="hidden max-w-3xl mx-auto mb-6 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-100 px-4 py-3 shadow-md"
+      role="status"
+      aria-live="polite"
+    ></div>
     <div
       class="dashboard-shell bg-white/80 dark:bg-gray-800/90 backdrop-blur-sm rounded-xl shadow-lg p-4 sm:p-6"
     >
@@ -1746,6 +1752,20 @@
           }
         },
 
+        async getSourceHealth() {
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/health/sources`);
+            if (!response.ok) {
+              return [];
+            }
+            const payload = await response.json();
+            return Array.isArray(payload?.sources) ? payload.sources : [];
+          } catch (error) {
+            console.error("Error fetching source health:", error);
+            return [];
+          }
+        },
+
         async getTrackingInfo(source, params, options = {}) {
           const showErrorToast = options.showErrorToast ?? true;
           try {
@@ -1956,6 +1976,58 @@
           carrierLogos[source.name] = source.icon;
         });
         carrierLogos.amazon = carrierLogos.amazon || AMAZON_LOGO_ASSET;
+      })();
+
+      function renderSourceHealth(reports) {
+        const banner = document.getElementById("sourceHealthBanner");
+        if (!banner) {
+          return;
+        }
+
+        const problems = (reports || []).filter(
+          (report) => report.status === "down" || report.status === "degraded"
+        );
+
+        if (problems.length === 0) {
+          banner.classList.add("hidden");
+          banner.innerHTML = "";
+          return;
+        }
+
+        const items = problems
+          .map((report) => {
+            const name = sanitizeHTML(String(report.source || "").toUpperCase());
+            const isDown = report.status === "down";
+            const dot = isDown ? "bg-red-500" : "bg-amber-500";
+            const label = isDown ? "DOWN" : "DEGRADED";
+            const detail =
+              isDown && report.lastError
+                ? ` &middot; ${sanitizeHTML(String(report.lastError))}`
+                : "";
+            return `<li class="flex items-start gap-2">
+              <span class="inline-block w-2 h-2 rounded-full mt-1.5 ${dot}"></span>
+              <span><strong>${name}</strong> ${label}${detail}</span>
+            </li>`;
+          })
+          .join("");
+
+        banner.innerHTML = `
+          <div class="flex items-center gap-2 font-semibold mb-1">
+            <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+            <span>Tracking source status</span>
+          </div>
+          <ul class="space-y-1 text-sm">${items}</ul>`;
+        banner.classList.remove("hidden");
+      }
+
+      (async function initializeSourceHealth() {
+        const SOURCE_HEALTH_POLL_MS = 5 * 60 * 1000;
+        const refresh = async () => {
+          const reports = await apiService.getSourceHealth();
+          renderSourceHealth(reports);
+        };
+        await refresh();
+        setInterval(refresh, SOURCE_HEALTH_POLL_MS);
       })();
       const statusColors = {
         1: "bg-gray-500", // Initial status

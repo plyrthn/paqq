@@ -1,0 +1,146 @@
+name: Upstream Sync
+
+# Pulls changes from the upstream repo, verifies the merged tree builds and
+# passes tests, and only then merges. If the merge conflicts or verification
+# fails, it leaves an open PR for manual review instead of merging.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      force_pr:
+        description: "Open a PR even when verification passes (skip auto-merge)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_REPO: https://github.com/doprdele/paqq.git
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    name: Sync from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH" --tags
+
+      - name: Check for new upstream commits
+        id: diff
+        run: |
+          upstream_sha=$(git rev-parse "upstream/$UPSTREAM_BRANCH")
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          short=$(git rev-parse --short "upstream/$UPSTREAM_BRANCH")
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$upstream_sha" HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date with upstream." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attempt merge
+        id: merge
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          branch="upstream-sync/${{ steps.diff.outputs.short }}-${GITHUB_RUN_ID}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git checkout -b "$branch"
+          if git merge --no-edit "upstream/$UPSTREAM_BRANCH"; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort || true
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Bun
+        if: steps.merge.outputs.conflicts == 'false'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Setup Node
+        if: steps.merge.outputs.conflicts == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: usps-scraper/package-lock.json
+
+      - name: Verify backend
+        id: verify_backend
+        if: steps.merge.outputs.conflicts == 'false'
+        working-directory: backend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+          bun run test
+
+      - name: Verify scraper
+        id: verify_scraper
+        if: steps.merge.outputs.conflicts == 'false'
+        working-directory: usps-scraper
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Verify frontend
+        id: verify_frontend
+        if: steps.merge.outputs.conflicts == 'false'
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run test
+
+      - name: Push merge branch
+        if: steps.merge.outputs.conflicts == 'false' || steps.merge.outputs.conflicts == 'true'
+        run: git push origin "HEAD:${{ steps.merge.outputs.branch }}"
+
+      - name: Open or merge PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          FORCE_PR: ${{ inputs.force_pr }}
+        run: |
+          if [ "$CONFLICTS" = "true" ]; then
+            title="Upstream sync (manual merge needed): ${{ steps.diff.outputs.short }}"
+            body=$'Automated sync from upstream hit merge conflicts and needs manual resolution.\n\nResolve conflicts on this branch, then merge.'
+          else
+            title="Upstream sync: ${{ steps.diff.outputs.short }}"
+            body=$'Automated sync from upstream. Backend, scraper, and frontend checks passed in the sync workflow.'
+          fi
+
+          url=$(gh pr create --base "$UPSTREAM_BRANCH" --head "$BRANCH" --title "$title" --body "$body" 2>/dev/null || gh pr view "$BRANCH" --json url -q .url)
+          echo "PR: $url" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$CONFLICTS" = "false" ] && [ "$FORCE_PR" != "true" ]; then
+            gh pr merge "$BRANCH" --merge --delete-branch
+            echo "Merged automatically." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Left PR open for review." >> "$GITHUB_STEP_SUMMARY"
+          fi

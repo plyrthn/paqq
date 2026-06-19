@@ -80,6 +80,11 @@ function buildTrackingUrl(payload: TrackingUpdatePayload): string | undefined {
       trackingNumber
     )}`;
   }
+  if (payload.source === "yunexpress") {
+    return `https://www.yuntrack.com/parcelTracking?id=${encodeURIComponent(
+      trackingNumber
+    )}`;
+  }
 
   return undefined;
 }
@@ -190,6 +195,56 @@ export class AppriseNotifier {
     );
     if (!result.ok) {
       console.error("Apprise notification failed:", result.detail);
+    }
+  }
+
+  async notifySourceHealthChange(payload: {
+    source: string;
+    status: "up" | "degraded" | "down" | "unknown";
+    previousStatus: "up" | "degraded" | "down" | "unknown";
+    report: {
+      failingCount: number;
+      watchedCount: number;
+      lastError?: string;
+      lastSuccessAt?: string;
+      since?: string;
+    };
+  }): Promise<void> {
+    const settings = await this.settingsProvider.getSettings();
+    const config = settings.notifications;
+
+    if (!config.enabled || config.appriseUrls.length === 0) {
+      return;
+    }
+
+    const sourceName = payload.source.toUpperCase();
+    const isDown = payload.status === "down";
+    const title = isDown
+      ? `Paqq: ${sourceName} source is down`
+      : `Paqq: ${sourceName} source recovered`;
+
+    const bodyLines = [
+      isDown
+        ? `Tracking source ${sourceName} appears to be down.`
+        : `Tracking source ${sourceName} is working again.`,
+      `Status: ${payload.previousStatus} -> ${payload.status}`,
+      `Failing packages: ${payload.report.failingCount}/${payload.report.watchedCount}`,
+    ];
+
+    if (payload.report.lastSuccessAt) {
+      bodyLines.push(`Last success: ${payload.report.lastSuccessAt}`);
+    }
+    if (isDown && payload.report.lastError) {
+      bodyLines.push(`Last error: ${payload.report.lastError}`);
+    }
+
+    const result = await this.sendAppriseMessage(
+      config.appriseUrls,
+      title,
+      bodyLines.join("\n")
+    );
+    if (!result.ok) {
+      console.error("Source health notification failed:", result.detail);
     }
   }
 

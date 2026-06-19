@@ -134,6 +134,7 @@ export class TrackingScheduler {
   private lastRunStartedAt?: string;
   private lastRunCompletedAt?: string;
   private nextRunAt?: string;
+  private afterRunHook: (() => Promise<void> | void) | null = null;
 
   constructor(
     private readonly env: RuntimeEnv,
@@ -169,6 +170,10 @@ export class TrackingScheduler {
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  setAfterRunHook(hook: (() => Promise<void> | void) | null): void {
+    this.afterRunHook = hook;
   }
 
   getStatus(): SchedulerStatus {
@@ -438,6 +443,15 @@ export class TrackingScheduler {
       }
 
       await this.queueSave();
+
+      if (this.afterRunHook) {
+        try {
+          await this.afterRunHook();
+        } catch (error) {
+          console.error("Scheduler after-run hook failed:", error);
+        }
+      }
+
       return true;
     } finally {
       this.lastRunCompletedAt = nowIso();

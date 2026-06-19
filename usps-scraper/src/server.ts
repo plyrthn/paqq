@@ -1,6 +1,7 @@
 import { scrapeUspsTracking } from "./scrape.js";
 import { scrapeUniuniTracking } from "./uniuni.js";
 import { scrapeUpsTracking } from "./ups.js";
+import { scrapeYunexpressTracking } from "./scrape-yunexpress.js";
 import { importAmazonShipments } from "./amazon.js";
 import { createScraperServer } from "./server-app.js";
 
@@ -9,6 +10,7 @@ const server = createScraperServer({
   usps: scrapeUspsTracking,
   uniuni: scrapeUniuniTracking,
   ups: scrapeUpsTracking,
+  yunexpress: scrapeYunexpressTracking,
   amazonImport: importAmazonShipments,
 });
 
